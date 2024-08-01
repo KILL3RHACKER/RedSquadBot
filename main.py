@@ -98,21 +98,25 @@ def update_balance(username, new_balance):
         if not found:
             f.write(f"{username} {new_balance}\n")
 
-def save_user(username, user_id):
-    with open('User.txt', 'a') as f:
-        f.write(f"{username} {user_id}\n")
-
-def get_username_by_id(user_id):
+def get_user_id_by_username(username):
     try:
         with open('User.txt', 'r') as f:
             lines = f.readlines()
         for line in lines:
             saved_username, saved_user_id = line.strip().split()
-            if int(saved_user_id) == user_id:
-                return saved_username
+            if saved_username == username:
+                return int(saved_user_id)
         return None
     except FileNotFoundError:
         return None
+
+def list_usernames():
+    try:
+        with open('User.txt', 'r') as f:
+            lines = f.readlines()
+        return "\n".join([line.split()[0] for line in lines])
+    except FileNotFoundError:
+        return "Нет пользователей."
 
 # Начало диалога
 @dp.message_handler(commands='start')
@@ -130,7 +134,7 @@ async def cmd_start(message: types.Message):
         await message.answer("Откуда вы о нас узнали?")
 
 # Проверка ключевых слов для не одобренных пользователей
-@dp.message_handler(lambda message: not is_user_approved(message.from_user.id) and message.text in ['👨Профиль', '💬Чаты', '✉️Поддержка'], state='*')
+@dp.message_handler(lambda message: not is_user_approved(message.from_user.id) and message.text in ['Профиль', 'Чаты', 'Поддержка'], state='*')
 async def not_approved_keyword(message: types.Message):
     await message.answer("Вы не имеете прав для выполнения этой команды. Пожалуйста, отправьте заявку с помощью команды /start.")
 
@@ -162,8 +166,8 @@ async def process_question3(message: types.Message, state: FSMContext):
     
     # Кнопки для принятия или отклонения заявки
     inline_kb = InlineKeyboardMarkup().add(
-        InlineKeyboardButton('Принять✅', callback_data=f'accept_{message.from_user.id}_{message.from_user.username}'),
-        InlineKeyboardButton('Отклонить❎', callback_data=f'reject_{message.from_user.id}')
+        InlineKeyboardButton('Принять', callback_data=f'accept_{message.from_user.id}'),
+        InlineKeyboardButton('Отклонить', callback_data=f'reject_{message.from_user.id}')
     )
     
     await bot.send_message(ADMIN_CHAT_ID, admin_message, reply_markup=inline_kb)
@@ -173,15 +177,16 @@ async def process_question3(message: types.Message, state: FSMContext):
 # Обработка ответа администратора
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith(('accept_', 'reject_')))
 async def process_callback(callback_query: types.CallbackQuery):
-    action, user_id, *username_parts = callback_query.data.split('_')
+    action, user_id = callback_query.data.split('_')
     user_id = int(user_id)
-    username = '_'.join(username_parts)  # Join parts of the username in case it contains underscores
     message_id = callback_query.message.message_id
     
     if action == 'accept':
         with open('True.txt', 'a') as f:
             f.write(f"{user_id}\n")
-        save_user(username, user_id)
+        username = callback_query.message.reply_to_message.from_user.username
+        with open('User.txt', 'a') as f:
+            f.write(f"{username} {user_id}\n")
         save_approval_date(user_id)
         await bot.send_message(user_id, "Ваша заявка принята!")
         await bot.edit_message_text("Заявка принята", chat_id=ADMIN_CHAT_ID, message_id=message_id)
@@ -195,30 +200,32 @@ async def process_callback(callback_query: types.CallbackQuery):
 
 # Меню
 async def show_menu(message: types.Message):
-    profile_button = KeyboardButton('👨Профиль')
-    chats_button = KeyboardButton('💬Чаты')
-    support_button = KeyboardButton('✉️Поддержка')
-    if message.from_user.id == int(ADMIN_CHAT_ID):
-        admin_button = KeyboardButton('Админ')
-        markup = ReplyKeyboardMarkup(resize_keyboard=True).add(profile_button, chats_button, support_button, admin_button)
-    else:
-        markup = ReplyKeyboardMarkup(resize_keyboard=True).add(profile_button, chats_button, support_button)
+    profile_button = KeyboardButton('Профиль')
+    chats_button = KeyboardButton('Чаты')
+    support_button = KeyboardButton('Поддержка')
+    admin_button = KeyboardButton('Админ') if message.from_user.id == int(ADMIN_CHAT_ID) else None
+
+    markup = ReplyKeyboardMarkup(resize_keyboard=True).add(profile_button, chats_button, support_button)
+    if admin_button:
+        markup.add(admin_button)
+    
     await message.answer("Меню", reply_markup=markup)
 
-@dp.message_handler(lambda message: message.text == '👨Профиль')
+@dp.message_handler(lambda message: message.text == 'Профиль')
 async def cmd_profile(message: types.Message):
     if not is_user_approved(message.from_user.id):
         await message.answer("Вы не имеете прав для выполнения этой команды. Пожалуйста, отправьте заявку с помощью команды /start.")
         return
     
     days_in_team = get_days_in_team(message.from_user.id)
+    # Продолжаем с предыдущего места
     balance = get_balance(message.from_user.username)
     
     profile_info = f"Ник: {message.from_user.full_name}\nДней в Тиме: {days_in_team}\nБаланс в рублях: {balance}"
     await message.answer(profile_info)
 
-# 💬Чаты
-@dp.message_handler(lambda message: message.text == '💬Чаты')
+# Чаты
+@dp.message_handler(lambda message: message.text == 'Чаты')
 async def cmd_chats(message: types.Message):
     if not is_user_approved(message.from_user.id):
         await message.answer("Вы не имеете прав для выполнения этой команды. Пожалуйста, отправьте заявку с помощью команды /start.")
@@ -228,10 +235,10 @@ async def cmd_chats(message: types.Message):
         InlineKeyboardButton('Основной чат', url='https://t.me/+y-78W8kD2Cg3Y2Zi'),
         InlineKeyboardButton('Выплаты', url='https://t.me/profitmoneyo')
     )
-    await message.answer("💬Чаты", reply_markup=inline_kb)
+    await message.answer("Чаты", reply_markup=inline_kb)
 
-# ✉️Поддержка
-@dp.message_handler(lambda message: message.text == '✉️Поддержка')
+# Поддержка
+@dp.message_handler(lambda message: message.text == 'Поддержка')
 async def cmd_support(message: types.Message):
     if not is_user_approved(message.from_user.id):
         await message.answer("Вы не имеете прав для выполнения этой команды. Пожалуйста, отправьте заявку с помощью команды /start.")
@@ -242,8 +249,21 @@ async def cmd_support(message: types.Message):
 # Админ панель
 @dp.message_handler(lambda message: message.text == 'Админ' and message.from_user.id == int(ADMIN_CHAT_ID))
 async def cmd_admin(message: types.Message):
+    inline_kb = InlineKeyboardMarkup().add(
+        InlineKeyboardButton('Изменить баланс', callback_data='change_balance'),
+        InlineKeyboardButton('Список пользователей', callback_data='list_users')
+    )
+    await message.answer("Админ панель", reply_markup=inline_kb)
+
+@dp.callback_query_handler(lambda c: c.data == 'change_balance')
+async def admin_change_balance(callback_query: types.CallbackQuery):
     await Form.change_balance.set()
-    await message.answer("Введите данные для изменения баланса в формате: username новая_сумма")
+    await bot.send_message(callback_query.from_user.id, "Введите данные для изменения баланса в формате: username новая_сумма")
+
+@dp.callback_query_handler(lambda c: c.data == 'list_users')
+async def admin_list_users(callback_query: types.CallbackQuery):
+    user_list = list_usernames()
+    await bot.send_message(callback_query.from_user.id, f"Список пользователей:\n{user_list}")
 
 @dp.message_handler(state=Form.change_balance)
 async def process_change_balance(message: types.Message, state: FSMContext):
@@ -252,7 +272,7 @@ async def process_change_balance(message: types.Message, state: FSMContext):
         new_balance = float(new_balance)
         
         user_id = get_user_id_by_username(username)
-        if not user_id:
+        if user_id is None:
             await message.answer("Пользователь с таким username не найден в User.txt.")
             await state.finish()
             return
@@ -265,18 +285,6 @@ async def process_change_balance(message: types.Message, state: FSMContext):
         await message.answer(f"Произошла ошибка: {str(e)}")
     finally:
         await state.finish()
-
-def get_user_id_by_username(username):
-    try:
-        with open('User.txt', 'r') as f:
-            lines = f.readlines()
-        for line in lines:
-            saved_username, saved_user_id = line.strip().split()
-            if saved_username == username:
-                return int(saved_user_id)
-        return None
-    except FileNotFoundError:
-        return None
 
 # Запуск бота
 if __name__ == '__main__':
